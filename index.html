@@ -1,73 +1,87 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Log Visualizer Pro</title>
-  <link rel="stylesheet" href="style.css">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Ship Update Analytics</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div class="wrap">
-  <h2>Log Data Dashboard</h2>
+    <h2>Ship Update Analytics (Update=1 Only)</h2>
 
-  <div class="card">
-    <div class="row">
-      <input id="file" type="file" accept=".xlsx,.xls,.xlsm" />
-      <button id="btnParse">解析 Excel</button>
-      <button id="btnDraw">刷新图表</button>
-      <span id="status" class="status">等待文件...</span>
+    <div class="card">
+        <div class="row">
+            <div class="input-group">
+                <label>1. Select File</label>
+                <input id="file" type="file" accept=".xlsx,.xls,.xlsm" />
+            </div>
+            <button id="btnParse">Load Data</button>
+            <span id="status" class="status">Waiting for file...</span>
+        </div>
+
+        <hr style="border:0; border-top:1px solid #eee; margin: 15px 0;">
+
+        <div class="row">
+            <div class="input-group">
+                <label>Sheet Name</label>
+                <input id="sheetName" value="Log" />
+            </div>
+            
+            <div class="input-group">
+                <label>Ship Name Col</label>
+                <select id="colShip"></select>
+            </div>
+            <div class="input-group">
+                <label>Update Status Col</label>
+                <select id="colUpdateStatus"></select>
+            </div>
+            <div class="input-group">
+                <label>Update Date Col</label>
+                <select id="colUpdateDate"></select>
+            </div>
+            <div class="input-group">
+                <label>Category Col</label>
+                <select id="colCategory"></select>
+            </div>
+        </div>
+
+        <div class="row" style="background: #f8f9fa; padding: 10px; border-radius: 6px;">
+            <div class="input-group">
+                <label>Filter by Ship</label>
+                <select id="filterShip"><option value="">(All Ships)</option></select>
+            </div>
+            <div class="input-group">
+                <label>Filter by Year</label>
+                <select id="filterYear"><option value="">(All Years)</option></select>
+            </div>
+            <div style="font-size: 13px; color: #666; align-self: flex-end; margin-bottom: 10px;">
+                ℹ️ Only records where <b>Update Column = 1</b> are shown.
+            </div>
+        </div>
     </div>
 
-    <div class="row">
-      <label>工作表名:</label>
-      <input id="sheetName" value="Log" style="width:100px" />
-
-      <label>日期列:</label>
-      <select id="dateCol"></select>
-
-      <label>分类列:</label>
-      <select id="catCol"></select>
-
-      <label>年份:</label>
-      <select id="year"></select>
-
-      <label>月份范围:</label>
-      <select id="mFrom"></select> 到 <select id="mTo"></select>
-
-      <label>分类筛选:</label>
-      <select id="catFilter"></select>
-
-      <label style="background: #e7f3ff; padding: 5px 10px; border-radius: 6px; cursor: pointer;">
-        <input type="checkbox" id="updateOnly" /> 只统计 Update=1
-      </label>
+    <div class="dashboard-grid">
+        <div class="panel">
+            <h3>Daily Trend (Updates)</h3>
+            <div class="chart-container"><canvas id="chartDaily"></canvas></div>
+        </div>
+        <div class="panel">
+            <h3>Monthly Trend</h3>
+            <div class="chart-container"><canvas id="chartMonthly"></canvas></div>
+        </div>
+        <div class="panel">
+            <h3>Yearly Overview</h3>
+            <div class="chart-container"><canvas id="chartYearly"></canvas></div>
+        </div>
+        <div class="panel">
+            <h3>Category Distribution</h3>
+            <div class="chart-container"><canvas id="chartCategory"></canvas></div>
+        </div>
     </div>
-  </div>
 
-  <div class="grid">
-    <div class="panel">
-      <h3>每月数据分布</h3>
-      <div class="chart-box">
-        <canvas id="c1"></canvas>
-      </div>
-    </div>
-    <div class="panel">
-      <h3>分类排行 (Top 20)</h3>
-      <div class="chart-box">
-        <canvas id="c2"></canvas>
-      </div>
-    </div>
-  </div>
-
-  <div class="grid" style="margin-top:20px;">
-    <div>
-      <h4>数据预览</h4>
-      <pre id="preview">尚未加载数据</pre>
-    </div>
-    <div>
-      <h4>运行日志</h4>
-      <pre id="diag">等待操作...</pre>
-    </div>
-  </div>
+    <pre id="diag">Diagnostics log...</pre>
 </div>
 
 <script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -76,215 +90,305 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <script>
-/** * 应用逻辑 
- */
-const $ = (id) => document.getElementById(id);
-
-let rawRows = [];
-let headers = [];
-let chart1 = null;
-let chart2 = null;
-
-// 通用消息显示
-function showStatus(msg, isOk) {
-    $("status").innerHTML = (isOk ? "✅ " : "❌ ") + msg;
-    $("status").className = "status " + (isOk ? "ok" : "bad");
-}
-
-function logDiag(msg) {
-    const d = $("diag");
-    d.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-    d.scrollTop = d.scrollHeight;
-}
-
-// 日期解析（处理 Excel 数值及多种字符串格式）
-function parseExcelDate(val) {
-    if (!val) return null;
-    if (val instanceof Date) return isNaN(val) ? null : val;
+    const $ = (id) => document.getElementById(id);
+    let rawRows = [];
+    let headers = [];
     
-    if (typeof val === 'number') {
-        return new Date(Math.round((val - 25569) * 86400 * 1000));
+    // Chart instances
+    let charts = { daily: null, monthly: null, yearly: null, category: null };
+
+    function log(msg) {
+        const d = $("diag");
+        d.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+        d.scrollTop = d.scrollHeight;
     }
-    
-    const s = String(val).trim().replace(/\bLT\b/ig, "");
-    const parts = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (parts) {
-        return new Date(parts[3], parts[2] - 1, parts[1]);
+
+    function setStatus(msg, type) {
+        const s = $("status");
+        s.textContent = msg;
+        s.className = "status " + (type === "ok" ? "ok" : "bad");
     }
-    return null;
-}
 
-function destroyCharts() {
-    if (chart1) chart1.destroy();
-    if (chart2) chart2.destroy();
-    chart1 = null; chart2 = null;
-}
-
-// 核心数据过滤
-function getFilteredData() {
-    const dCol = $("dateCol").value;
-    const cCol = $("catCol").value;
-    const yr = $("year").value;
-    const mf = $("mFrom").value;
-    const mt = $("mTo").value;
-    const cf = $("catFilter").value;
-    const upOnly = $("updateOnly").checked;
-
-    if (!dCol) return [];
-
-    return rawRows.filter(r => {
-        // 1. 日期解析
-        const d = parseExcelDate(r[dCol]);
-        if (!d) return false;
-
-        const yStr = String(d.getFullYear());
-        const mStr = String(d.getMonth() + 1).padStart(2, '0');
-
-        // 2. 基础过滤条件
-        if (yr && yStr !== yr) return false;
-        if (mStr < mf || mStr > mt) return false;
-        if (cf && cCol && String(r[cCol]) !== cf) return false;
-
-        // 3. Update=1 逻辑
-        if (upOnly) {
-            const upKey = Object.keys(r).find(k => k.toLowerCase() === 'update');
-            if (!upKey || String(r[upKey]) !== "1") return false;
+    // Helper: Fill Select Box
+    function fillSelect(id, items, defaultText = null) {
+        const el = $(id);
+        el.innerHTML = "";
+        if (defaultText) {
+            const opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = defaultText;
+            el.appendChild(opt);
         }
-
-        r._dObj = d; // 暂存日期对象供绘图使用
-        return true;
-    });
-}
-
-function drawCharts() {
-    const filtered = getFilteredData();
-    logDiag(`正在绘图，符合条件行数: ${filtered.length}`);
-    
-    destroyCharts();
-    if (filtered.length === 0) {
-        showStatus("筛选后无可用数据", false);
-        return;
-    }
-
-    // --- 逻辑：按月统计 ---
-    const monthMap = {};
-    filtered.forEach(r => {
-        const key = `${r._dObj.getFullYear()}-${String(r._dObj.getMonth()+1).padStart(2,'0')}`;
-        monthMap[key] = (monthMap[key] || 0) + 1;
-    });
-    const sortedMonths = Object.keys(monthMap).sort();
-
-    // --- 逻辑：按分类统计 ---
-    const catCol = $("catCol").value;
-    const catMap = {};
-    if (catCol) {
-        filtered.forEach(r => {
-            const val = String(r[catCol] || "未分类");
-            catMap[val] = (catMap[val] || 0) + 1;
+        items.forEach(item => {
+            const opt = document.createElement("option");
+            opt.value = item;
+            opt.textContent = item;
+            el.appendChild(opt);
         });
     }
-    const topCats = Object.entries(catMap).sort((a,b) => b[1]-a[1]).slice(0, 20);
 
-    // 渲染图表 1
-    chart1 = new Chart($("c1"), {
-        type: 'bar',
-        data: {
-            labels: sortedMonths,
-            datasets: [{ label: '记录数', data: sortedMonths.map(m => monthMap[m]), backgroundColor: '#3498db' }]
-        },
-        options: { responsive: true, maintainAspectRatio: false }
-    });
-
-    // 渲染图表 2
-    chart2 = new Chart($("c2"), {
-        type: 'bar',
-        data: {
-            labels: topCats.map(x => x[0]),
-            datasets: [{ label: '记录数', data: topCats.map(x => x[1]), backgroundColor: '#2ecc71' }]
-        },
-        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
-    });
-
-    showStatus(`更新完成 (${filtered.length} 条记录)`, true);
-}
-
-async function parseFile() {
-    const file = $("file").files[0];
-    if (!file) { showStatus("未选择文件", false); return; }
-
-    logDiag(`读取文件: ${file.name}`);
-    try {
-        const data = await file.arrayBuffer();
-        const wb = XLSX.read(data, { type: 'array' });
-        
-        const targetSheet = $("sheetName").value.trim().toLowerCase();
-        const realName = wb.SheetNames.find(n => n.toLowerCase() === targetSheet) || 
-                         wb.SheetNames.find(n => n.toLowerCase().includes(targetSheet));
-
-        if (!realName) { showStatus("找不到指定的 Sheet", false); return; }
-
-        const grid = XLSX.utils.sheet_to_json(wb.Sheets[realName], { header: 1 });
-        const hIndex = grid.findIndex(r => r.filter(c => c !== "").length >= 3);
-        
-        if (hIndex === -1) { showStatus("找不到有效的表格结构", false); return; }
-
-        headers = grid[hIndex].map(h => String(h || "").trim());
-        rawRows = grid.slice(hIndex + 1).map(row => {
-            let obj = {};
-            headers.forEach((h, i) => obj[h] = row[i] ?? "");
-            return obj;
-        }).filter(r => Object.values(r).some(v => v !== ""));
-
-        // 更新下拉菜单
-        const dGuess = headers.find(h => /date|时间|日期/i.test(h)) || headers[0];
-        const cGuess = headers.find(h => /category|type|分类|类别/i.test(h)) || "";
-
-        fillSelect($("dateCol"), headers);
-        $("dateCol").value = dGuess;
-
-        fillSelect($("catCol"), headers, "-- 不统计分类 --");
-        if (cGuess) $("catCol").value = cGuess;
-
-        const years = [...new Set(rawRows.map(r => {
-            const d = parseExcelDate(r[dGuess]);
-            return d ? d.getFullYear() : null;
-        }).filter(y => y))].sort();
-        fillSelect($("year"), years, "所有年份");
-
-        const months = ["01","02","03","04","05","06","07","08","09","10","11","12"];
-        fillSelect($("mFrom"), months); fillSelect($("mTo"), months);
-        $("mFrom").value = "01"; $("mTo").value = "12";
-
-        $("preview").textContent = JSON.stringify(rawRows.slice(0, 5), null, 2);
-        logDiag(`成功加载 ${rawRows.length} 行数据`);
-        drawCharts();
-    } catch (e) {
-        logDiag(`错误: ${e.message}`);
-        showStatus("解析失败", false);
+    // Excel Date Parser
+    function parseDate(val) {
+        if (!val) return null;
+        if (val instanceof Date) return isNaN(val) ? null : val;
+        // Excel Serial
+        if (typeof val === 'number') {
+            return new Date(Math.round((val - 25569) * 86400 * 1000));
+        }
+        // Strings
+        const str = String(val).trim();
+        // Try YYYY-MM-DD or DD/MM/YYYY
+        const d = new Date(str);
+        if (!isNaN(d)) return d;
+        return null;
     }
-}
 
-function fillSelect(el, list, emptyLabel) {
-    el.innerHTML = "";
-    if (emptyLabel) el.options.add(new Option(emptyLabel, ""));
-    list.forEach(v => el.options.add(new Option(v, v)));
-}
+    // ------------------------------------------------------
+    // Main Logic
+    // ------------------------------------------------------
 
-// 事件监听
-$("btnParse").addEventListener("click", parseFile);
-$("btnDraw").addEventListener("click", drawCharts);
-$("dateCol").addEventListener("change", drawCharts);
-$("year").addEventListener("change", drawCharts);
-$("mFrom").addEventListener("change", drawCharts);
-$("mTo").addEventListener("change", drawCharts);
-$("updateOnly").addEventListener("change", drawCharts);
-$("catCol").addEventListener("change", () => {
-    const c = $("catCol").value;
-    const list = c ? [...new Set(rawRows.map(r => String(r[c] || "")))].sort() : [];
-    fillSelect($("catFilter"), list, "所有分类");
-    drawCharts();
-});
-$("catFilter").addEventListener("change", drawCharts);
+    async function parseFile() {
+        const file = $("file").files[0];
+        if (!file) { setStatus("Please select a file first", "bad"); return; }
+        
+        setStatus("Reading file...", "ok");
+        log("Reading file: " + file.name);
+
+        try {
+            const buf = await file.arrayBuffer();
+            const wb = XLSX.read(buf, { type: 'array' });
+            
+            const targetSheet = $("sheetName").value.trim().toLowerCase();
+            const sheetName = wb.SheetNames.find(n => n.toLowerCase() === targetSheet) || 
+                              wb.SheetNames.find(n => n.toLowerCase().includes(targetSheet));
+
+            if (!sheetName) {
+                setStatus("Sheet not found", "bad");
+                log(`Error: Sheet '${targetSheet}' not found.`);
+                return;
+            }
+
+            const ws = wb.Sheets[sheetName];
+            const json = XLSX.utils.sheet_to_json(ws, { header: 1 });
+            
+            // Find Header Row (first row with >3 columns)
+            const headerIdx = json.findIndex(row => row.filter(c => c).length >= 3);
+            if (headerIdx === -1) throw new Error("Could not detect header row");
+
+            headers = json[headerIdx].map(h => String(h || "").trim());
+            rawRows = json.slice(headerIdx + 1).map(row => {
+                let obj = {};
+                headers.forEach((h, i) => obj[h] = row[i]);
+                return obj;
+            });
+
+            log(`Parsed ${rawRows.length} rows. Mapping columns...`);
+
+            // Auto-Map Columns
+            const lowerHeaders = headers.map(h => h.toLowerCase());
+            
+            fillSelect("colShip", headers);
+            $("colShip").value = headers[lowerHeaders.findIndex(h => h.includes("ship") || h.includes("vessel"))] || "";
+
+            fillSelect("colUpdateStatus", headers);
+            $("colUpdateStatus").value = headers[lowerHeaders.findIndex(h => h === "update" || h.includes("status"))] || "";
+
+            fillSelect("colUpdateDate", headers);
+            $("colUpdateDate").value = headers[lowerHeaders.findIndex(h => h.includes("update") && (h.includes("date") || h.includes("time")))] || "";
+
+            fillSelect("colCategory", headers);
+            $("colCategory").value = headers[lowerHeaders.findIndex(h => h.includes("category") || h.includes("type"))] || "";
+
+            updateFilters();
+            setStatus("File Loaded. Ready to analyze.", "ok");
+            updateDashboard();
+
+        } catch (e) {
+            console.error(e);
+            setStatus("Error: " + e.message, "bad");
+        }
+    }
+
+    function updateFilters() {
+        const shipCol = $("colShip").value;
+        const dateCol = $("colUpdateDate").value;
+
+        if (!shipCol || !dateCol) return;
+
+        // Extract Ships
+        const ships = [...new Set(rawRows.map(r => r[shipCol]).filter(v => v))].sort();
+        fillSelect("filterShip", ships, "(All Ships)");
+
+        // Extract Years from Update Date
+        const years = new Set();
+        rawRows.forEach(r => {
+            const d = parseDate(r[dateCol]);
+            if (d) years.add(d.getFullYear());
+        });
+        fillSelect("filterYear", [...years].sort(), "(All Years)");
+    }
+
+    function getProcessedData() {
+        const colShip = $("colShip").value;
+        const colUpdate = $("colUpdateStatus").value;
+        const colDate = $("colUpdateDate").value;
+        const colCat = $("colCategory").value;
+        
+        const filterShip = $("filterShip").value;
+        const filterYear = $("filterYear").value;
+
+        if (!colShip || !colUpdate || !colDate) {
+            log("Missing column mapping. Please select columns.");
+            return [];
+        }
+
+        let validCount = 0;
+        let updateOneCount = 0;
+
+        const data = rawRows.filter(row => {
+            // 1. Strict Update = 1 Check
+            // Handle number 1 or string "1"
+            const updateVal = row[colUpdate];
+            if (String(updateVal).trim() !== "1") return false;
+            updateOneCount++;
+
+            // 2. Filter by Ship
+            if (filterShip && row[colShip] !== filterShip) return false;
+
+            // 3. Parse Date
+            const d = parseDate(row[colDate]);
+            if (!d) return false;
+
+            // 4. Filter by Year
+            if (filterYear && String(d.getFullYear()) !== filterYear) return false;
+
+            // Attach parsed date to row object for easier grouping
+            row._parsedDate = d;
+            return true;
+        });
+
+        log(`Rows with Update=1: ${updateOneCount}. Final Dataset after filters: ${data.length}`);
+        return data;
+    }
+
+    function destroyChart(key) {
+        if (charts[key]) {
+            charts[key].destroy();
+            charts[key] = null;
+        }
+    }
+
+    function updateDashboard() {
+        const data = getProcessedData();
+        const colCat = $("colCategory").value;
+
+        // Prepare Aggregates
+        const aggDaily = {};
+        const aggMonthly = {};
+        const aggYearly = {};
+        const aggCat = {};
+
+        data.forEach(row => {
+            const d = row._parsedDate;
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const day = String(d.getDate()).padStart(2, "0");
+
+            // Daily Key: YYYY-MM-DD
+            const kDaily = `${y}-${m}-${day}`;
+            aggDaily[kDaily] = (aggDaily[kDaily] || 0) + 1;
+
+            // Monthly Key: YYYY-MM
+            const kMonthly = `${y}-${m}`;
+            aggMonthly[kMonthly] = (aggMonthly[kMonthly] || 0) + 1;
+
+            // Yearly Key: YYYY
+            const kYearly = `${y}`;
+            aggYearly[kYearly] = (aggYearly[kYearly] || 0) + 1;
+
+            // Category
+            const cat = row[colCat] || "Uncategorized";
+            aggCat[cat] = (aggCat[cat] || 0) + 1;
+        });
+
+        // --- Render Daily Chart ---
+        destroyChart('daily');
+        const dailyLabels = Object.keys(aggDaily).sort();
+        charts.daily = new Chart($("chartDaily"), {
+            type: 'line',
+            data: {
+                labels: dailyLabels,
+                datasets: [{
+                    label: 'Daily Updates',
+                    data: dailyLabels.map(k => aggDaily[k]),
+                    borderColor: '#007bff',
+                    backgroundColor: 'rgba(0,123,255,0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // --- Render Monthly Chart ---
+        destroyChart('monthly');
+        const monthlyLabels = Object.keys(aggMonthly).sort();
+        charts.monthly = new Chart($("chartMonthly"), {
+            type: 'bar',
+            data: {
+                labels: monthlyLabels,
+                datasets: [{
+                    label: 'Monthly Updates',
+                    data: monthlyLabels.map(k => aggMonthly[k]),
+                    backgroundColor: '#17a2b8'
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // --- Render Yearly Chart ---
+        destroyChart('yearly');
+        const yearlyLabels = Object.keys(aggYearly).sort();
+        charts.yearly = new Chart($("chartYearly"), {
+            type: 'bar',
+            data: {
+                labels: yearlyLabels,
+                datasets: [{
+                    label: 'Yearly Updates',
+                    data: yearlyLabels.map(k => aggYearly[k]),
+                    backgroundColor: '#ffc107'
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // --- Render Category Chart ---
+        destroyChart('category');
+        const catEntries = Object.entries(aggCat).sort((a,b) => b[1] - a[1]); // Sort Desc
+        charts.category = new Chart($("chartCategory"), {
+            type: 'bar',
+            data: {
+                labels: catEntries.map(e => e[0]),
+                datasets: [{
+                    label: 'Updates by Category',
+                    data: catEntries.map(e => e[1]),
+                    backgroundColor: '#28a745'
+                }]
+            },
+            options: { 
+                indexAxis: 'y', 
+                responsive: true, 
+                maintainAspectRatio: false 
+            }
+        });
+    }
+
+    // Events
+    $("btnParse").addEventListener("click", parseFile);
+    
+    // Auto-update when dropdowns change
+    ["filterShip", "filterYear", "colShip", "colUpdateStatus", "colUpdateDate", "colCategory"]
+        .forEach(id => $(id).addEventListener("change", updateDashboard));
 
 </script>
 </body>
