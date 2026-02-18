@@ -1,242 +1,301 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Log Sheet Dashboard</title>
-
-<!-- Excel parser -->
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
-
-<!-- Charts -->
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-
-<style>
-body { font-family: system-ui, sans-serif; margin: 20px; }
-.container { max-width: 1200px; margin: auto; }
-.controls { background:#f5f5f5; padding:15px; border-radius:10px; margin-bottom:15px; }
-select,input,button { padding:6px 8px; border-radius:6px; border:1px solid #ccc; }
-.row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
-.chart { height:360px; border:1px solid #eee; border-radius:10px; }
-pre { background:#fff; padding:10px; border:1px solid #eee; border-radius:10px; font-size:12px; max-height:200px; overflow:auto; }
-.status-ok { color:green; font-weight:bold; }
-.status-bad { color:red; font-weight:bold; }
-.grid { display:grid; gap:15px; }
-@media(min-width:900px){ .grid{ grid-template-columns:1fr 1fr; } }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Log Sheet Dashboard (Fixed)</title>
+  <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
-<div class="container">
-<h2>Excel Log Dashboard (No Backend)</h2>
 
-<div class="controls">
-<div class="row">
-<input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm">
-<span id="status"></span>
+<div class="wrap">
+  <h2>Excel Log Dashboard</h2>
+
+  <div class="card">
+    <div class="row">
+      <input id="file" type="file" accept=".xlsx,.xls,.xlsm" />
+      <button id="btnParse">Parse Log</button>
+      <button id="btnDraw">Update Charts</button>
+      <span id="status" class="status"></span>
+    </div>
+
+    <div class="row">
+      <label>Sheet Name:</label>
+      <input id="sheetName" value="Log" style="width:120px" />
+
+      <label>Date Col:</label>
+      <select id="dateCol"></select>
+
+      <label>Category Col:</label>
+      <select id="catCol"></select>
+
+      <label>Year:</label>
+      <select id="year"></select>
+
+      <label>Range:</label>
+      <select id="mFrom"></select>
+      <span>to</span>
+      <select id="mTo"></select>
+
+      <label>Filter:</label>
+      <select id="catFilter"></select>
+    </div>
+
+    <div class="hint">
+      Supported: .xlsx, .xlsm. Data stays in your browser. 
+      If charts expand infinitely, ensure <b>style.css</b> is in the same folder.
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h3 style="margin-top:0; font-size:16px;">Monthly Distribution</h3>
+      <div class="chart-container">
+        <canvas id="c1"></canvas>
+      </div>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0; font-size:16px;">Top Categories</h3>
+      <div class="chart-container">
+        <canvas id="c2"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="margin-top:14px; font-size:16px;">Preview (First 8 rows)</h3>
+  <pre id="preview">No file loaded.</pre>
+
+  <h3 style="margin-top:14px; font-size:16px;">Diagnostics</h3>
+  <pre id="diag">Waiting for file...</pre>
 </div>
 
-<div class="row">
-<label>Date Column:</label>
-<select id="dateCol"></select>
-
-<label>Category Column:</label>
-<select id="catCol"></select>
-
-<label>Year:</label>
-<select id="yearFilter"></select>
-
-<label>Month From:</label>
-<select id="monthFrom"></select>
-
-<label>Month To:</label>
-<select id="monthTo"></select>
-
-<label>Category Filter:</label>
-<select id="catFilter"></select>
-
-<button id="updateBtn">Update Charts</button>
-</div>
-
-<p style="font-size:12px;">
-This page reads ONLY the sheet named <b>Log</b>.  
-No data is uploaded anywhere. Everything runs locally in your browser.
-</p>
-</div>
-
-<div class="grid">
-<div>
-<div id="monthlyChart" class="chart"></div>
-<p>Monthly Incident Count</p>
-</div>
-
-<div>
-<div id="categoryChart" class="chart"></div>
-<p>Category Distribution (Top 20)</p>
-</div>
-</div>
-
-<h3>Preview (First 8 Rows)</h3>
-<pre id="preview">No file loaded.</pre>
-
-</div>
+<script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <script>
-const $ = id => document.getElementById(id);
+/** ---------------------------
+ * Logic Core
+ * -------------------------- */
+const $ = (id) => document.getElementById(id);
 
+let wb = null;
 let rows = [];
 let headers = [];
-let monthlyChart = echarts.init($("monthlyChart"));
-let categoryChart = echarts.init($("categoryChart"));
+let chart1 = null;
+let chart2 = null;
 
-function setStatus(ok,msg){
-$("status").innerHTML = ok
-? `<span class="status-ok">${msg}</span>`
-: `<span class="status-bad">${msg}</span>`;
+function setStatus(msg, type) {
+    $("status").className = "status " + (type || "");
+    $("status").innerHTML = (type === "ok" ? "✅ " : "❌ ") + msg;
 }
 
-function parseDate(val){
-if(!val) return null;
-
-if(val instanceof Date && !isNaN(val)) return val;
-
-const s = String(val).replace("LT","").trim();
-const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-if(!m) return null;
-
-return new Date(m[3], m[2]-1, m[1]);
+function logDiag(msg) {
+    const diag = $("diag");
+    if (diag.textContent === "Waiting for file...") diag.textContent = "";
+    diag.textContent += msg + "\n";
+    diag.scrollTop = diag.scrollHeight;
 }
 
-function unique(arr){ return [...new Set(arr)]; }
-
-function fillSelect(sel, items, placeholder){
-sel.innerHTML="";
-if(placeholder){
-let o=document.createElement("option");
-o.value="";
-o.textContent=placeholder;
-sel.appendChild(o);
+// 辅助函数：填充下拉框
+function fillSelect(sel, items, placeholder) {
+    sel.innerHTML = "";
+    if (placeholder != null) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = placeholder;
+        sel.appendChild(o);
+    }
+    items.forEach(it => {
+        const o = document.createElement("option");
+        o.value = it;
+        o.textContent = it;
+        sel.appendChild(o);
+    });
 }
-items.forEach(i=>{
-let o=document.createElement("option");
-o.value=i;
-o.textContent=i;
-sel.appendChild(o);
+
+// 日期解析
+function parseLogDate(val) {
+    if (!val) return null;
+    if (val instanceof Date && !isNaN(val)) return val;
+    if (typeof val === "number") {
+        const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+        return isNaN(d) ? null : d;
+    }
+    const s = String(val).trim().replace(/\bLT\b/ig, "").trim();
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (!m) return null;
+    const d = new Date(m[3], m[2]-1, m[1]);
+    return isNaN(d) ? null : d;
+}
+
+// 获取过滤后的数据
+function getFilteredData() {
+    const dateCol = $("dateCol").value;
+    const catCol = $("catCol").value;
+    const yearFilter = $("year").value;
+    const mFrom = $("mFrom").value;
+    const mTo = $("mTo").value;
+    const catFilter = $("catFilter").value;
+
+    if (!dateCol) return [];
+
+    return rows.filter(r => {
+        const d = parseLogDate(r[dateCol]);
+        if (!d) return false;
+        
+        const y = String(d.getFullYear());
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        
+        if (yearFilter && y !== yearFilter) return false;
+        if (m < mFrom || m > mTo) return false;
+        if (catFilter && catCol && String(r[catCol]) !== catFilter) return false;
+        
+        return true;
+    }).map(r => ({ ...r, _parsedDate: parseLogDate(r[dateCol]) }));
+}
+
+function destroyCharts() {
+    if (chart1) { chart1.destroy(); chart1 = null; }
+    if (chart2) { chart2.destroy(); chart2 = null; }
+    // 物理清理画布，防止 resize 遗留
+    const canvases = ['c1', 'c2'];
+    canvases.forEach(id => {
+        const canvas = $(id);
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    });
+}
+
+function drawCharts() {
+    const data = getFilteredData();
+    if (data.length === 0) {
+        logDiag("No data found for current filters.");
+        return;
+    }
+
+    destroyCharts();
+
+    // 统计：月份
+    const monthCounts = {};
+    data.forEach(item => {
+        const k = `${item._parsedDate.getFullYear()}-${String(item._parsedDate.getMonth()+1).padStart(2,'0')}`;
+        monthCounts[k] = (monthCounts[k] || 0) + 1;
+    });
+    const mLabels = Object.keys(monthCounts).sort();
+    
+    // 统计：类别
+    const catCol = $("catCol").value;
+    const catCounts = {};
+    if (catCol) {
+        data.forEach(item => {
+            const val = String(item[catCol] || "Unknown");
+            catCounts[val] = (catCounts[val] || 0) + 1;
+        });
+    }
+    const cLabels = Object.entries(catCounts).sort((a,b) => b[1]-a[1]).slice(0, 20);
+
+    // 绘图 1
+    chart1 = new Chart($("c1"), {
+        type: 'bar',
+        data: {
+            labels: mLabels,
+            datasets: [{ label: 'Records', data: mLabels.map(l => monthCounts[l]), backgroundColor: '#007bff' }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    // 绘图 2
+    chart2 = new Chart($("c2"), {
+        type: 'bar',
+        data: {
+            labels: cLabels.map(x => x[0]),
+            datasets: [{ label: 'Count', data: cLabels.map(x => x[1]), backgroundColor: '#28a745' }]
+        },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false }
+    });
+
+    logDiag(`Charts updated: ${data.length} rows processed.`);
+}
+
+async function parseFile() {
+    logDiag("Starting parse...");
+    const file = $("file").files[0];
+    if (!file) { setStatus("No file selected", "bad"); return; }
+
+    try {
+        const buf = await file.arrayBuffer();
+        const workbook = XLSX.read(buf, { type: "array" });
+        const targetName = $("sheetName").value.toLowerCase();
+        
+        const realSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes(targetName));
+        if (!realSheetName) {
+            setStatus("Sheet not found", "bad");
+            return;
+        }
+
+        const rawData = XLSX.utils.sheet_to_json(workbook.Sheets[realSheetName], { header: 1 });
+        
+        // 查找表头行 (至少 3 个非空单元格)
+        const headerIndex = rawData.findIndex(r => r.filter(c => c !== "").length >= 3);
+        if (headerIndex === -1) { setStatus("Invalid table structure", "bad"); return; }
+
+        headers = rawData[headerIndex].map(h => String(h || "").trim());
+        rows = rawData.slice(headerIndex + 1).map(rowArr => {
+            let obj = {};
+            headers.forEach((h, i) => obj[h] = rowArr[i] === undefined ? "" : rowArr[i]);
+            return obj;
+        }).filter(r => Object.values(r).some(v => v !== ""));
+
+        // 更新 UI 下拉框
+        fillSelect($("dateCol"), headers);
+        fillSelect($("catCol"), headers, "-- None --");
+        
+        // 自动猜测日期列
+        const dateGuess = headers.find(h => h.toLowerCase().includes("date") || h.toLowerCase().includes("time"));
+        if (dateGuess) $("dateCol").value = dateGuess;
+
+        // 填充年份
+        const years = [...new Set(rows.map(r => {
+            const d = parseLogDate(r[$("dateCol").value]);
+            return d ? d.getFullYear() : null;
+        }).filter(y => y))].sort();
+        fillSelect($("year"), years, "All Years");
+
+        // 填充月份和分类
+        fillSelect($("mFrom"), ["01","02","03","04","05","06","07","08","09","10","11","12"]);
+        fillSelect($("mTo"), ["01","02","03","04","05","06","07","08","09","10","11","12"]);
+        $("mFrom").value = "01"; $("mTo").value = "12";
+
+        // 预览
+        $("preview").textContent = JSON.stringify(rows.slice(0, 5), null, 2);
+        
+        setStatus(`Loaded ${rows.length} rows from [${realSheetName}]`, "ok");
+        drawCharts();
+    } catch (e) {
+        console.error(e);
+        setStatus("Error parsing file", "bad");
+        logDiag("Error: " + e.message);
+    }
+}
+
+// 绑定事件
+$("btnParse").addEventListener("click", parseFile);
+$("btnDraw").addEventListener("click", drawCharts);
+$("dateCol").addEventListener("change", drawCharts);
+$("catCol").addEventListener("change", () => {
+    const cats = [...new Set(rows.map(r => r[$("catCol").value]).filter(v => v))].sort();
+    fillSelect($("catFilter"), cats, "All Categories");
+    drawCharts();
 });
-}
+$("year").addEventListener("change", drawCharts);
+$("mFrom").addEventListener("change", drawCharts);
+$("mTo").addEventListener("change", drawCharts);
+$("catFilter").addEventListener("change", drawCharts);
 
-function loadFile(file){
-const reader = new FileReader();
-reader.onload = function(e){
-const wb = XLSX.read(e.target.result,{type:"array"});
-
-const logName = wb.SheetNames.find(n=>n.toLowerCase().trim()=="log");
-if(!logName){
-setStatus(false,"Log sheet not found.");
-return;
-}
-
-rows = XLSX.utils.sheet_to_json(wb.Sheets[logName],{defval:""});
-headers = Object.keys(rows[0]||{});
-
-fillSelect($("dateCol"),headers,"Select Date Column");
-fillSelect($("catCol"),headers,"Optional Category");
-
-$("preview").textContent =
-JSON.stringify(rows.slice(0,8),null,2);
-
-setStatus(true,`Loaded Log sheet. Rows: ${rows.length}`);
-
-updateFilters();
-drawCharts();
-};
-reader.readAsArrayBuffer(file);
-}
-
-function updateFilters(){
-const dateCol = $("dateCol").value;
-if(!dateCol) return;
-
-let years=[];
-rows.forEach(r=>{
-let d=parseDate(r[dateCol]);
-if(d) years.push(d.getFullYear());
-});
-years = unique(years).sort();
-fillSelect($("yearFilter"),years,"All Years");
-
-fillSelect($("monthFrom"),["01","02","03","04","05","06","07","08","09","10","11","12"]);
-fillSelect($("monthTo"),["01","02","03","04","05","06","07","08","09","10","11","12"]);
-
-let catCol=$("catCol").value;
-if(catCol){
-let cats=unique(rows.map(r=>r[catCol]).filter(Boolean));
-fillSelect($("catFilter"),cats,"All Categories");
-}
-}
-
-function drawCharts(){
-const dateCol=$("dateCol").value;
-if(!dateCol) return;
-
-let filtered=[];
-
-rows.forEach(r=>{
-let d=parseDate(r[dateCol]);
-if(!d) return;
-
-const year=$("yearFilter").value;
-if(year && d.getFullYear()!=year) return;
-
-const m=String(d.getMonth()+1).padStart(2,"0");
-if($("monthFrom").value && m<$("monthFrom").value) return;
-if($("monthTo").value && m>$("monthTo").value) return;
-
-if($("catFilter").value && $("catCol").value){
-if(r[$("catCol").value] != $("catFilter").value) return;
-}
-
-filtered.push({row:r,date:d});
-});
-
-let monthMap=new Map();
-filtered.forEach(f=>{
-let key=f.date.getFullYear()+"-"+String(f.date.getMonth()+1).padStart(2,"0");
-monthMap.set(key,(monthMap.get(key)||0)+1);
-});
-
-monthlyChart.setOption({
-xAxis:{type:"category",data:[...monthMap.keys()].sort()},
-yAxis:{type:"value"},
-series:[{type:"bar",data:[...monthMap.keys()].sort().map(k=>monthMap.get(k))}]
-});
-
-let catMap=new Map();
-const catCol=$("catCol").value;
-if(catCol){
-filtered.forEach(f=>{
-let c=f.row[catCol]||"(blank)";
-catMap.set(c,(catMap.get(c)||0)+1);
-});
-}
-
-let sorted=[...catMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,20);
-
-categoryChart.setOption({
-xAxis:{type:"value"},
-yAxis:{type:"category",data:sorted.map(x=>x[0]),inverse:true},
-series:[{type:"bar",data:sorted.map(x=>x[1])}]
-});
-}
-
-$("fileInput").addEventListener("change",e=>{
-if(e.target.files[0]) loadFile(e.target.files[0]);
-});
-
-$("updateBtn").addEventListener("click",drawCharts);
-$("dateCol").addEventListener("change",updateFilters);
-$("catCol").addEventListener("change",updateFilters);
-
+logDiag("System ready. Please load a file.");
 </script>
+
 </body>
 </html>
