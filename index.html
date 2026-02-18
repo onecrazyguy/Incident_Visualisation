@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Log Sheet Dashboard</title>
+
+<!-- Excel parser -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+
+<!-- Charts -->
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+<style>
+body { font-family: system-ui, sans-serif; margin: 20px; }
+.container { max-width: 1200px; margin: auto; }
+.controls { background:#f5f5f5; padding:15px; border-radius:10px; margin-bottom:15px; }
+select,input,button { padding:6px 8px; border-radius:6px; border:1px solid #ccc; }
+.row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
+.chart { height:360px; border:1px solid #eee; border-radius:10px; }
+pre { background:#fff; padding:10px; border:1px solid #eee; border-radius:10px; font-size:12px; max-height:200px; overflow:auto; }
+.status-ok { color:green; font-weight:bold; }
+.status-bad { color:red; font-weight:bold; }
+.grid { display:grid; gap:15px; }
+@media(min-width:900px){ .grid{ grid-template-columns:1fr 1fr; } }
+</style>
+</head>
+
+<body>
+<div class="container">
+<h2>Excel Log Dashboard (No Backend)</h2>
+
+<div class="controls">
+<div class="row">
+<input type="file" id="fileInput" accept=".xlsx,.xls,.xlsm">
+<span id="status"></span>
+</div>
+
+<div class="row">
+<label>Date Column:</label>
+<select id="dateCol"></select>
+
+<label>Category Column:</label>
+<select id="catCol"></select>
+
+<label>Year:</label>
+<select id="yearFilter"></select>
+
+<label>Month From:</label>
+<select id="monthFrom"></select>
+
+<label>Month To:</label>
+<select id="monthTo"></select>
+
+<label>Category Filter:</label>
+<select id="catFilter"></select>
+
+<button id="updateBtn">Update Charts</button>
+</div>
+
+<p style="font-size:12px;">
+This page reads ONLY the sheet named <b>Log</b>.  
+No data is uploaded anywhere. Everything runs locally in your browser.
+</p>
+</div>
+
+<div class="grid">
+<div>
+<div id="monthlyChart" class="chart"></div>
+<p>Monthly Incident Count</p>
+</div>
+
+<div>
+<div id="categoryChart" class="chart"></div>
+<p>Category Distribution (Top 20)</p>
+</div>
+</div>
+
+<h3>Preview (First 8 Rows)</h3>
+<pre id="preview">No file loaded.</pre>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+let rows = [];
+let headers = [];
+let monthlyChart = echarts.init($("monthlyChart"));
+let categoryChart = echarts.init($("categoryChart"));
+
+function setStatus(ok,msg){
+$("status").innerHTML = ok
+? `<span class="status-ok">${msg}</span>`
+: `<span class="status-bad">${msg}</span>`;
+}
+
+function parseDate(val){
+if(!val) return null;
+
+if(val instanceof Date && !isNaN(val)) return val;
+
+const s = String(val).replace("LT","").trim();
+const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+if(!m) return null;
+
+return new Date(m[3], m[2]-1, m[1]);
+}
+
+function unique(arr){ return [...new Set(arr)]; }
+
+function fillSelect(sel, items, placeholder){
+sel.innerHTML="";
+if(placeholder){
+let o=document.createElement("option");
+o.value="";
+o.textContent=placeholder;
+sel.appendChild(o);
+}
+items.forEach(i=>{
+let o=document.createElement("option");
+o.value=i;
+o.textContent=i;
+sel.appendChild(o);
+});
+}
+
+function loadFile(file){
+const reader = new FileReader();
+reader.onload = function(e){
+const wb = XLSX.read(e.target.result,{type:"array"});
+
+const logName = wb.SheetNames.find(n=>n.toLowerCase().trim()=="log");
+if(!logName){
+setStatus(false,"Log sheet not found.");
+return;
+}
+
+rows = XLSX.utils.sheet_to_json(wb.Sheets[logName],{defval:""});
+headers = Object.keys(rows[0]||{});
+
+fillSelect($("dateCol"),headers,"Select Date Column");
+fillSelect($("catCol"),headers,"Optional Category");
+
+$("preview").textContent =
+JSON.stringify(rows.slice(0,8),null,2);
+
+setStatus(true,`Loaded Log sheet. Rows: ${rows.length}`);
+
+updateFilters();
+drawCharts();
+};
+reader.readAsArrayBuffer(file);
+}
+
+function updateFilters(){
+const dateCol = $("dateCol").value;
+if(!dateCol) return;
+
+let years=[];
+rows.forEach(r=>{
+let d=parseDate(r[dateCol]);
+if(d) years.push(d.getFullYear());
+});
+years = unique(years).sort();
+fillSelect($("yearFilter"),years,"All Years");
+
+fillSelect($("monthFrom"),["01","02","03","04","05","06","07","08","09","10","11","12"]);
+fillSelect($("monthTo"),["01","02","03","04","05","06","07","08","09","10","11","12"]);
+
+let catCol=$("catCol").value;
+if(catCol){
+let cats=unique(rows.map(r=>r[catCol]).filter(Boolean));
+fillSelect($("catFilter"),cats,"All Categories");
+}
+}
+
+function drawCharts(){
+const dateCol=$("dateCol").value;
+if(!dateCol) return;
+
+let filtered=[];
+
+rows.forEach(r=>{
+let d=parseDate(r[dateCol]);
+if(!d) return;
+
+const year=$("yearFilter").value;
+if(year && d.getFullYear()!=year) return;
+
+const m=String(d.getMonth()+1).padStart(2,"0");
+if($("monthFrom").value && m<$("monthFrom").value) return;
+if($("monthTo").value && m>$("monthTo").value) return;
+
+if($("catFilter").value && $("catCol").value){
+if(r[$("catCol").value] != $("catFilter").value) return;
+}
+
+filtered.push({row:r,date:d});
+});
+
+let monthMap=new Map();
+filtered.forEach(f=>{
+let key=f.date.getFullYear()+"-"+String(f.date.getMonth()+1).padStart(2,"0");
+monthMap.set(key,(monthMap.get(key)||0)+1);
+});
+
+monthlyChart.setOption({
+xAxis:{type:"category",data:[...monthMap.keys()].sort()},
+yAxis:{type:"value"},
+series:[{type:"bar",data:[...monthMap.keys()].sort().map(k=>monthMap.get(k))}]
+});
+
+let catMap=new Map();
+const catCol=$("catCol").value;
+if(catCol){
+filtered.forEach(f=>{
+let c=f.row[catCol]||"(blank)";
+catMap.set(c,(catMap.get(c)||0)+1);
+});
+}
+
+let sorted=[...catMap.entries()].sort((a,b)=>b[1]-a[1]).slice(0,20);
+
+categoryChart.setOption({
+xAxis:{type:"value"},
+yAxis:{type:"category",data:sorted.map(x=>x[0]),inverse:true},
+series:[{type:"bar",data:sorted.map(x=>x[1])}]
+});
+}
+
+$("fileInput").addEventListener("change",e=>{
+if(e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+$("updateBtn").addEventListener("click",drawCharts);
+$("dateCol").addEventListener("change",updateFilters);
+$("catCol").addEventListener("change",updateFilters);
+
+</script>
+</body>
+</html>
